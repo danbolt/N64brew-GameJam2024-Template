@@ -26,6 +26,20 @@ T3DVertPacked circle_verts[CIRCLE_VERT_COUNT] __attribute__((aligned(16)));
 
 const uint8_t ambient_light[4] = {0xff, 0xff, 0xff, 0xff};
 
+typedef struct {
+    float t;
+    float arena_radius;
+} GameState;
+
+typedef struct {
+    T3DMat4 arena_transform;
+    T3DMat4FP arena_transform_fixed;
+} DrawState;
+
+GameState current_state;
+
+DrawState draw_state;
+
 void generate_circle_model()
 {
     circle_verts[0] = (T3DVertPacked){
@@ -46,6 +60,38 @@ void generate_circle_model()
     data_cache_hit_writeback(circle_verts, sizeof(circle_verts));
 }
 
+void tick_game_state(GameState* state, float delta)
+{
+    state->t += delta;
+
+    state->arena_radius = 15.f + sin(state->t * 2.0) * 10.f;
+}
+
+void populate_draw_state(const GameState* state, DrawState* to_draw)
+{
+    const float radius_of_arena = INV_CIRCLE_MODEL_RADIUS * state->arena_radius;
+    t3d_mat4_identity(&(to_draw->arena_transform));
+    t3d_mat4_scale(&(to_draw->arena_transform), radius_of_arena, radius_of_arena, radius_of_arena);
+    t3d_mat4_to_fixed(&(to_draw->arena_transform_fixed), &(to_draw->arena_transform));
+
+    data_cache_hit_writeback(to_draw, sizeof(DrawState));
+}
+
+void render_draw_state(const DrawState* to_draw)
+{
+    t3d_matrix_push(UncachedAddr(&(to_draw->arena_transform_fixed)));
+    t3d_vert_load(UncachedAddr(circle_verts), 0, CIRCLE_VERT_COUNT * 2);
+    t3d_matrix_pop(1);
+
+    for (int i = 1; i < (CIRCLE_VERT_COUNT * 2) - 1; i++) {
+        t3d_tri_draw(0, i, i + 1);
+    }
+    t3d_tri_draw(0, (CIRCLE_VERT_COUNT * 2) - 1, 1);
+
+    t3d_tri_sync();
+
+}
+
 void minigame_init()
 {
     generate_circle_model();
@@ -57,18 +103,23 @@ void minigame_init()
 
     viewport = t3d_viewport_create();
     t3d_mat4_identity(&base_model);
-    t3d_mat4_scale(&base_model, INV_CIRCLE_MODEL_RADIUS, INV_CIRCLE_MODEL_RADIUS, INV_CIRCLE_MODEL_RADIUS);
-    t3d_mat4_scale(&base_model, 10.f, 10.f, 10.f);
     t3d_mat4_to_fixed(&base_model_fp, &base_model);
     data_cache_hit_writeback(&base_model_fp, sizeof(T3DMat4FP));
+
+    current_state.t = 0.f;
+    current_state.arena_radius = 30.f;
 }
 
-void minigame_fixedloop(float deltatime) { }
+void minigame_fixedloop(float deltatime) {
+    tick_game_state(&current_state, deltatime);
+}
 
 void minigame_loop(float deltatime)
 {
     t3d_viewport_set_projection(&viewport, T3D_DEG_TO_RAD(85.0f), 10.0f, 100.0f);
     t3d_viewport_look_at(&viewport, &camera_position, &camera_target, &(T3DVec3){{0,1,0}});
+
+    populate_draw_state(&current_state, &draw_state);
 
     rdpq_attach(display_get(), NULL);
     t3d_frame_start();
@@ -87,14 +138,10 @@ void minigame_loop(float deltatime)
     t3d_state_set_drawflags(T3D_FLAG_SHADED);
 
     t3d_matrix_push(UncachedAddr(&base_model_fp));
-    t3d_vert_load(UncachedAddr(circle_verts), 0, CIRCLE_VERT_COUNT * 2);
-    t3d_matrix_pop(1);
-    for (int i = 1; i < (CIRCLE_VERT_COUNT * 2) - 1; i++) {
-        t3d_tri_draw(0, i, i + 1);
-    }
-    t3d_tri_draw(0, (CIRCLE_VERT_COUNT * 2) - 1, 1);
+    
+    render_draw_state(&draw_state);
 
-    t3d_tri_sync();
+    t3d_matrix_pop(1);
 
     rdpq_detach_show();
 }
