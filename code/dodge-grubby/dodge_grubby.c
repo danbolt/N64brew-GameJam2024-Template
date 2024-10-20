@@ -19,7 +19,16 @@ T3DMat4FP base_model_fp;
 const T3DVec3 camera_position = { { 0, 0, -30 } };
 const T3DVec3 camera_target = { { 0, 0,   0 } };
 
-T3DVertPacked verts[2] __attribute__((aligned(16)));
+T3DVertPacked verts[2] __attribute__((aligned(16))) = {
+    (T3DVertPacked){
+        .posA = {-1, -1, 0}, .rgbaA = 0xFF0000FF,
+        .posB = { 1, -1, 0}, .rgbaB = 0x00FF00FF,
+    },
+    (T3DVertPacked){
+        .posA = { 1,  1, 0}, .rgbaA = 0x0000FFFF,
+        .posB = {-1,  1, 0}, .rgbaB = 0xFF00FFFF,
+    }
+};
 
 const uint8_t ambient_light[4] = {0xff, 0xff, 0xff, 0xff};
 
@@ -32,20 +41,8 @@ void minigame_init()
 
     viewport = t3d_viewport_create();
     t3d_mat4_identity(&base_model);
-    t3d_mat4_scale(&base_model, 0.4f, 0.4f, 0.4f);
     t3d_mat4_to_fixed(&base_model_fp, &base_model);
     data_cache_hit_writeback(&base_model_fp, sizeof(T3DMat4FP));
-
-    uint16_t norm = t3d_vert_pack_normal(&(T3DVec3){{ 0, 0, 1}});
-    verts[0] = (T3DVertPacked){
-        .posA = {-16, -16, 0}, .rgbaA = 0xFF0000FF, .normA = norm,
-        .posB = { 16, -16, 0}, .rgbaB = 0x00FF00FF, .normB = norm,
-    };
-    verts[1] = (T3DVertPacked){
-        .posA = { 16,  16, 0}, .rgbaA = 0x0000FFFF, .normA = norm,
-        .posB = {-16,  16, 0}, .rgbaB = 0xFF00FFFF, .normB = norm,
-    };
-    data_cache_hit_writeback(verts, sizeof(T3DVertPacked) * 2);
 }
 
 void minigame_fixedloop(float deltatime) { }
@@ -57,6 +54,9 @@ void minigame_loop(float deltatime)
 
     rdpq_attach(display_get(), NULL);
     t3d_frame_start();
+    rdpq_mode_antialias(AA_NONE);
+    rdpq_mode_persp(false);
+    rdpq_mode_filter(FILTER_POINT);
     rdpq_mode_zbuf(false, false);
 
     t3d_viewport_attach(&viewport);
