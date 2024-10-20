@@ -38,7 +38,9 @@ typedef struct {
 
 GameState current_state;
 
-DrawState draw_state;
+#define NUMBER_OF_DRAW_STATES 3
+int current_draw_state;
+DrawState draw_states[3];
 
 void generate_circle_model()
 {
@@ -63,8 +65,6 @@ void generate_circle_model()
 void tick_game_state(GameState* state, float delta)
 {
     state->t += delta;
-
-    state->arena_radius = 15.f + sin(state->t * 2.0) * 10.f;
 }
 
 void populate_draw_state(const GameState* state, DrawState* to_draw)
@@ -106,8 +106,10 @@ void minigame_init()
     t3d_mat4_to_fixed(&base_model_fp, &base_model);
     data_cache_hit_writeback(&base_model_fp, sizeof(T3DMat4FP));
 
+    current_draw_state = 0;
+
     current_state.t = 0.f;
-    current_state.arena_radius = 30.f;
+    current_state.arena_radius = 10.f;
 }
 
 void minigame_fixedloop(float deltatime) {
@@ -119,7 +121,7 @@ void minigame_loop(float deltatime)
     t3d_viewport_set_projection(&viewport, T3D_DEG_TO_RAD(85.0f), 10.0f, 100.0f);
     t3d_viewport_look_at(&viewport, &camera_position, &camera_target, &(T3DVec3){{0,1,0}});
 
-    populate_draw_state(&current_state, &draw_state);
+    populate_draw_state(&current_state, &(draw_states[current_draw_state]));
 
     rdpq_attach(display_get(), NULL);
     t3d_frame_start();
@@ -139,11 +141,13 @@ void minigame_loop(float deltatime)
 
     t3d_matrix_push(UncachedAddr(&base_model_fp));
     
-    render_draw_state(&draw_state);
+    render_draw_state(&(draw_states[current_draw_state]));
 
     t3d_matrix_pop(1);
 
     rdpq_detach_show();
+
+    current_draw_state = (current_draw_state + 1) % NUMBER_OF_DRAW_STATES;
 }
 
 void minigame_cleanup()
