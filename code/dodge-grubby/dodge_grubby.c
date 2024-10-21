@@ -5,6 +5,8 @@
 #include <t3d/t3dmath.h>
 
 #include "emcee_image_data.h"
+#include "sixtwelve.h"
+#include "sixtwelve_helpers.h"
 
 #define CLAMP(x, min, max) ((x) < (min) ? (min) : ((x) > (max) ? (max) : (x)))
 
@@ -32,7 +34,7 @@ const uint8_t ambient_light[4] = {0xff, 0xff, 0xff, 0xff};
 
 const rdpq_texparms_t hud_default_tex_params = { 0 };
 
-surface_t emcee_surface;
+surface_t sixtwelve_surface;
 
 #define PLAYER_RADIUS 2.f
 #define PLAYER_RADIUS_SQUARED (PLAYER_RADIUS * PLAYER_RADIUS)
@@ -297,7 +299,7 @@ void minigame_init()
 {
     generate_circle_model();
 
-    emcee_surface = surface_make_linear(emcee_image_data, FMT_RGBA16, 32, 64);
+    sixtwelve_surface = surface_make_linear(sixtwelve_tex, FMT_IA4, SIXTWELVE_TEXTURE_WIDTH, SIXTWELVE_TEXTURE_HEIGHT);
 
     display_init(RESOLUTION_320x240, DEPTH_16_BPP, 3, GAMMA_NONE, FILTERS_RESAMPLE);
     rdpq_init();
@@ -354,8 +356,8 @@ void minigame_loop(float deltatime)
     rdpq_set_mode_standard();
     rdpq_mode_alphacompare(128);
     rdpq_sync_load();
-    rdpq_tex_upload(TILE0, &emcee_surface, &hud_default_tex_params);
-    rdpq_texture_rectangle(TILE0, 0, 0, 32, 64, 0, 0);
+    rdpq_tex_upload(TILE0, &sixtwelve_surface, &hud_default_tex_params);
+    rdpq_texture_rectangle(TILE0, 32 + 0, 32 + 0, 32 + SIXTWELVE_TEXTURE_WIDTH, 32 + SIXTWELVE_TEXTURE_HEIGHT, 0, 0);
 
     rdpq_detach_show();
 
