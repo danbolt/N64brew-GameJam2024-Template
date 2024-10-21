@@ -4,6 +4,8 @@
 #include <t3d/t3d.h>
 #include <t3d/t3dmath.h>
 
+#include "emcee_image_data.h"
+
 #define CLAMP(x, min, max) ((x) < (min) ? (min) : ((x) > (max) ? (max) : (x)))
 
 const MinigameDef minigame_def = {
@@ -27,6 +29,10 @@ const T3DVec3 camera_target = { { 0, 0, 5 } };
 T3DVertPacked circle_verts[CIRCLE_VERT_COUNT] __attribute__((aligned(16)));
 
 const uint8_t ambient_light[4] = {0xff, 0xff, 0xff, 0xff};
+
+const rdpq_texparms_t hud_default_tex_params = { 0 };
+
+surface_t emcee_surface;
 
 #define PLAYER_RADIUS 2.f
 #define PLAYER_RADIUS_SQUARED (PLAYER_RADIUS * PLAYER_RADIUS)
@@ -281,20 +287,17 @@ void init_game_state(GameState* state)
 
     for (int i = 0; i < MAXPLAYERS; i++)
     {
-        state->player_states[i].position[0] = i * 4.f;
-        state->player_states[i].position[1] = 0.0;
+        const float theta = ((float)i / (float)MAXPLAYERS) * T3D_PI * 2.0f;
+        state->player_states[i].position[0] = cos(theta) * state->arena_radius * 0.75f;
+        state->player_states[i].position[1] = sin(theta) * state->arena_radius * 0.75f;
     }
-
-    state->player_states[2].position[0] = -17.0f;
-
-
-    state->player_states[3].position[0] = -18.0f;
-    state->player_states[3].position[1] = 4.0f;
 }
 
 void minigame_init()
 {
     generate_circle_model();
+
+    emcee_surface = surface_make_linear(emcee_image_data, FMT_RGBA16, 32, 64);
 
     display_init(RESOLUTION_320x240, DEPTH_16_BPP, 3, GAMMA_NONE, FILTERS_RESAMPLE);
     rdpq_init();
@@ -320,6 +323,11 @@ void minigame_loop(float deltatime)
     t3d_viewport_set_projection(&viewport, T3D_DEG_TO_RAD(50.0f), 10.0f, 100.0f);
     t3d_viewport_look_at(&viewport, &camera_position, &camera_target, &(T3DVec3){{0,1,0}});
 
+    // const float subtick_delta = (float)(core_get_subtick() * DELTATIME);
+    // GameState interpolation_state = current_state;
+    // tick_game_state(&interpolation_state, subtick_delta);
+    // populate_draw_state(&interpolation_state, &(draw_states[current_draw_state]));
+
     populate_draw_state(&current_state, &(draw_states[current_draw_state]));
 
     rdpq_attach(display_get(), NULL);
@@ -335,14 +343,19 @@ void minigame_loop(float deltatime)
     t3d_screen_clear_color(RGBA32(0xff, 0x22, 0x22, 0x0));
 
     t3d_light_set_ambient(ambient_light);
-
     t3d_state_set_drawflags(T3D_FLAG_SHADED);
 
     t3d_matrix_push(UncachedAddr(&base_model_fp));
-    
     render_draw_state(&(draw_states[current_draw_state]));
-
     t3d_matrix_pop(1);
+
+    // 2D HUD   
+    rdpq_sync_pipe();
+    rdpq_set_mode_standard();
+    rdpq_mode_alphacompare(128);
+    rdpq_sync_load();
+    rdpq_tex_upload(TILE0, &emcee_surface, &hud_default_tex_params);
+    rdpq_texture_rectangle(TILE0, 0, 0, 32, 64, 0, 0);
 
     rdpq_detach_show();
 
