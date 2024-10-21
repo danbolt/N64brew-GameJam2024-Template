@@ -320,6 +320,8 @@ void minigame_fixedloop(float deltatime) {
     tick_game_state(&current_state, deltatime);
 }
 
+const char* test_str = "The fish was delish, and it made quite a dish.";
+
 void minigame_loop(float deltatime)
 {
     t3d_viewport_set_projection(&viewport, T3D_DEG_TO_RAD(50.0f), 10.0f, 100.0f);
@@ -357,7 +359,16 @@ void minigame_loop(float deltatime)
     rdpq_mode_alphacompare(128);
     rdpq_sync_load();
     rdpq_tex_upload(TILE0, &sixtwelve_surface, &hud_default_tex_params);
-    rdpq_texture_rectangle(TILE0, 32 + 0, 32 + 0, 32 + SIXTWELVE_TEXTURE_WIDTH, 32 + SIXTWELVE_TEXTURE_HEIGHT, 0, 0);
+
+    int xStep = 0;
+    for (int i = 0; test_str[i] != '\0'; i++)
+    {
+        const sixtwelve_character_info* info = sixtwelve_get_character_info(test_str[i]);
+
+        rdpq_texture_rectangle(TILE0, xStep + 12 + 0 + info->x_offset, 12 + 0 + info->y_offset, xStep + 12 + info->width + info->x_offset, info->height + 12 + 0 + info->y_offset, info->x, info->y);
+
+        xStep += info->x_advance;
+    }
 
     rdpq_detach_show();
 
