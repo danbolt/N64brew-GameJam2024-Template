@@ -29,6 +29,9 @@ T3DVertPacked circle_verts[CIRCLE_VERT_COUNT] __attribute__((aligned(16)));
 const uint8_t ambient_light[4] = {0xff, 0xff, 0xff, 0xff};
 
 #define PLAYER_RADIUS 2.f
+#define PLAYER_RADIUS_SQUARED (PLAYER_RADIUS * PLAYER_RADIUS)
+#define DOUBLE_PLAYER_RADIUS (PLAYER_RADIUS * 2.0)
+#define DOUBLE_PLAYER_RADIUS_SQUARED (DOUBLE_PLAYER_RADIUS * DOUBLE_PLAYER_RADIUS)
 #define PLAYER_SHADOW_SCALE (PLAYER_RADIUS * INV_CIRCLE_MODEL_RADIUS)
 
 typedef struct {
@@ -161,7 +164,7 @@ void tick_game_state(GameState* state, float delta)
     // Handle movement input
     for (int i = 0; i < MAXPLAYERS; i++)
     {
-        bool player_is_human = i < playercount;
+        const bool player_is_human = i < playercount;
 
         if (player_is_human)
         {
@@ -176,22 +179,53 @@ void tick_game_state(GameState* state, float delta)
     }
 
     // Step player movement
+    // TODO: Alternate input priority per tick
+    const float shortened_arena_radius = (state->arena_radius - PLAYER_RADIUS);
+    const float shortened_arena_radius_squared = shortened_arena_radius * shortened_arena_radius;
     for (int i = 0; i < MAXPLAYERS; i++)
     {
-        // TODO: Alternate input priority per tick
-
         state->player_states[i].position[0] += state->player_states[i].input_vector.v[0] * MAX_PLAYER_MOVE_SPEED * delta;
         state->player_states[i].position[1] += state->player_states[i].input_vector.v[2] * MAX_PLAYER_MOVE_SPEED * delta;
 
+        // Push away from other players
+        for (int j = 0; j < MAXPLAYERS; j++)
+        {
+            // We don't need to detect collision with ourselves
+            if (i == j)
+            {
+                continue;
+            }
+
+            const float deltaX = state->player_states[i].position[0] - state->player_states[j].position[0];
+            const float deltaY = state->player_states[i].position[1] - state->player_states[j].position[1];
+            const float distance_to_other_player_squared = (deltaX * deltaX) + (deltaY * deltaY);
+
+            if (distance_to_other_player_squared < DOUBLE_PLAYER_RADIUS_SQUARED)
+            {
+                const float angle_to_overlap = atan2(deltaY, deltaX);
+
+                state->player_states[i].position[0] = (cos(angle_to_overlap) * DOUBLE_PLAYER_RADIUS) + state->player_states[j].position[0];
+                state->player_states[i].position[1] = (sin(angle_to_overlap) * DOUBLE_PLAYER_RADIUS) + state->player_states[j].position[1];
+            }
+        }
+
         // Clamp to inside of the arena
+        const float dist_to_center_of_area_squared = state->player_states[i].position[0] * state->player_states[i].position[0] + state->player_states[i].position[1] * state->player_states[i].position[1];
+        if (dist_to_center_of_area_squared >= shortened_arena_radius_squared)
+        {
+            const float angle_to_center = atan2(state->player_states[i].position[1], state->player_states[i].position[0]);
+
+            state->player_states[i].position[0] = cos(angle_to_center) * shortened_arena_radius;
+            state->player_states[i].position[1] = sin(angle_to_center) * shortened_arena_radius;
+        }
     }
 }
 
 void populate_draw_state(const GameState* state, DrawState* to_draw)
 {
-    const float radius_of_arena = INV_CIRCLE_MODEL_RADIUS * state->arena_radius;
+    const float arena_scale = INV_CIRCLE_MODEL_RADIUS * state->arena_radius;
     t3d_mat4_identity(&(to_draw->arena_transform));
-    t3d_mat4_scale(&(to_draw->arena_transform), radius_of_arena, radius_of_arena, radius_of_arena);
+    t3d_mat4_scale(&(to_draw->arena_transform), arena_scale, arena_scale, arena_scale);
     t3d_mat4_to_fixed(&(to_draw->arena_transform_fixed), &(to_draw->arena_transform));
 
     for (int i = 0; i < MAXPLAYERS; i++)
@@ -250,6 +284,12 @@ void init_game_state(GameState* state)
         state->player_states[i].position[0] = i * 4.f;
         state->player_states[i].position[1] = 0.0;
     }
+
+    state->player_states[2].position[0] = -17.0f;
+
+
+    state->player_states[3].position[0] = -18.0f;
+    state->player_states[3].position[1] = 4.0f;
 }
 
 void minigame_init()
@@ -292,7 +332,7 @@ void minigame_loop(float deltatime)
     t3d_viewport_attach(&viewport);
 
     rdpq_mode_combiner(RDPQ_COMBINER_SHADE);
-    t3d_screen_clear_color(RGBA32(0x22, 0x22, 0x22, 0x0));
+    t3d_screen_clear_color(RGBA32(0xff, 0x22, 0x22, 0x0));
 
     t3d_light_set_ambient(ambient_light);
 
