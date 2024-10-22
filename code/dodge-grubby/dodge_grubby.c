@@ -22,19 +22,33 @@ T3DViewport viewport;
 T3DMat4 base_model;
 T3DMat4FP base_model_fp;
 
-const T3DVec3 camera_position = { { 0, 30, 30 } };
+T3DMat4FP player_shadow_scale_transform_fixed;
+
+const T3DVec3 camera_position = { { 0, 50, 50 } };
 const T3DVec3 camera_target = { { 0, 0, 5 } };
+
+const uint8_t ambient_light[4] = {0xff, 0xff, 0xff, 0xff};
 
 #define CIRCLE_VERT_COUNT 16
 #define CIRCLE_MODEL_RADIUS 100
 #define INV_CIRCLE_MODEL_RADIUS 0.01f
 T3DVertPacked circle_verts[CIRCLE_VERT_COUNT] __attribute__((aligned(16)));
 
-const uint8_t ambient_light[4] = {0xff, 0xff, 0xff, 0xff};
+const T3DVertPacked character_verts[2]  __attribute__((aligned(16))) = {
+    (T3DVertPacked){
+        .posA = {-4, 0, 1}, .stA = {  0 << 5, 130 << 5 },
+        .posB = { 4, 0, 1}, .stB = { 66 << 5, 130 << 5 },
+    },
+    (T3DVertPacked){
+        .posA = { 4, 8, 1}, .stA = { 66 << 5, 0 << 5 },
+        .posB = {-4, 8, 1}, .stB = {  0 << 5, 0 << 5 },
+    }
+};
 
 const rdpq_texparms_t hud_default_tex_params = { 0 };
 
 surface_t sixtwelve_surface;
+surface_t emcee_surface;
 
 #define PLAYER_RADIUS 2.f
 #define PLAYER_RADIUS_SQUARED (PLAYER_RADIUS * PLAYER_RADIUS)
@@ -240,7 +254,6 @@ void populate_draw_state(const GameState* state, DrawState* to_draw)
     {
         t3d_mat4_identity(&(to_draw->player_draw_states[i].transform));
         t3d_mat4_translate(&(to_draw->player_draw_states[i].transform), state->player_states[i].position[0], 0.0, state->player_states[i].position[1]);
-        t3d_mat4_scale(&(to_draw->player_draw_states[i].transform), PLAYER_SHADOW_SCALE, PLAYER_SHADOW_SCALE, PLAYER_SHADOW_SCALE);
         t3d_mat4_to_fixed(&(to_draw->player_draw_states[i].transform_fixed), &(to_draw->player_draw_states[i].transform));
     }
 
@@ -253,25 +266,25 @@ void render_draw_state(const DrawState* to_draw)
     t3d_matrix_push(UncachedAddr(&(to_draw->arena_transform_fixed)));
     t3d_vert_load(UncachedAddr(circle_verts), 0, CIRCLE_VERT_COUNT * 2);
     t3d_matrix_pop(1);
-
     for (int i = 1; i < (CIRCLE_VERT_COUNT * 2) - 1; i++)
     {
         t3d_tri_draw(0, i, i + 1);
     }
     t3d_tri_draw(0, (CIRCLE_VERT_COUNT * 2) - 1, 1);
-
     t3d_tri_sync();
 
-    rdpq_set_prim_color((color_t){0, 0, 0, 0xff});
+    rdpq_sync_pipe();
     rdpq_mode_combiner(RDPQ_COMBINER_FLAT);
+    rdpq_set_prim_color((color_t){0, 0, 0, 0xff});
 
     // Draw each player's shadow
     for (int pi = 0; pi < MAXPLAYERS; pi++)
     {
         t3d_matrix_push(UncachedAddr(&(to_draw->player_draw_states[pi].transform_fixed)));
-        t3d_vert_load(UncachedAddr(circle_verts), 0, CIRCLE_VERT_COUNT * 2);
-        t3d_matrix_pop(1);
+        t3d_matrix_push(UncachedAddr(&(player_shadow_scale_transform_fixed)));
 
+        t3d_vert_load(UncachedAddr(circle_verts), 0, CIRCLE_VERT_COUNT * 2);
+        t3d_matrix_pop(2);
         for (int i = 1; i < (CIRCLE_VERT_COUNT * 2) - 1; i++)
         {
             t3d_tri_draw(0, i, i + 1);
@@ -280,6 +293,26 @@ void render_draw_state(const DrawState* to_draw)
 
         t3d_tri_sync();
     }
+
+    // Draw each player's sprite
+    rdpq_sync_pipe();
+    rdpq_set_mode_standard();
+    rdpq_mode_alphacompare(128);
+    t3d_state_set_drawflags(T3D_FLAG_TEXTURED);
+    rdpq_tex_upload(TILE0, &emcee_surface, &hud_default_tex_params);
+    for (int pi = 0; pi < MAXPLAYERS; pi++)
+    {
+        t3d_matrix_push(UncachedAddr(&(to_draw->player_draw_states[pi].transform_fixed)));
+        t3d_vert_load(UncachedAddr(character_verts), 0, 4);
+        t3d_matrix_pop(1);
+
+        t3d_tri_draw(0, 1, 2);
+        t3d_tri_draw(2, 3, 0);
+
+        t3d_tri_sync();
+    }
+
+    rdpq_debug_stop();
 }
 
 void init_game_state(GameState* state)
@@ -292,6 +325,9 @@ void init_game_state(GameState* state)
         const float theta = ((float)i / (float)MAXPLAYERS) * T3D_PI * 2.0f;
         state->player_states[i].position[0] = cos(theta) * state->arena_radius * 0.75f;
         state->player_states[i].position[1] = sin(theta) * state->arena_radius * 0.75f;
+
+        state->player_states[i].position[0] = (i - 2) * 6.f;
+        state->player_states[i].position[1] = 0.f;
     }
 }
 
@@ -299,14 +335,23 @@ void minigame_init()
 {
     generate_circle_model();
 
+    T3DMat4 player_shadow_scale_transform;
+    t3d_mat4_identity(&player_shadow_scale_transform);
+    t3d_mat4_scale(&(player_shadow_scale_transform), PLAYER_SHADOW_SCALE, PLAYER_SHADOW_SCALE, PLAYER_SHADOW_SCALE);
+    t3d_mat4_to_fixed(&player_shadow_scale_transform_fixed, &player_shadow_scale_transform);
+    data_cache_hit_writeback(&player_shadow_scale_transform_fixed, sizeof(T3DMat4FP));
+
     sixtwelve_surface = surface_make_linear(sixtwelve_tex, FMT_IA4, SIXTWELVE_TEXTURE_WIDTH, SIXTWELVE_TEXTURE_HEIGHT);
+    emcee_surface = surface_make_linear(emcee_image_data, FMT_RGBA16, 32, 64);
 
     display_init(RESOLUTION_320x240, DEPTH_16_BPP, 3, GAMMA_NONE, FILTERS_RESAMPLE);
     rdpq_init();
+    // rdpq_debug_start();
 
     t3d_init((T3DInitParams){});
 
     viewport = t3d_viewport_create();
+
     t3d_mat4_identity(&base_model);
     t3d_mat4_to_fixed(&base_model_fp, &base_model);
     data_cache_hit_writeback(&base_model_fp, sizeof(T3DMat4FP));
@@ -320,24 +365,24 @@ void minigame_fixedloop(float deltatime) {
     tick_game_state(&current_state, deltatime);
 }
 
-const char* test_str = "The fish was delish, and it made quite a dish.";
+char test_str[128] = "";
 
 void minigame_loop(float deltatime)
 {
-    t3d_viewport_set_projection(&viewport, T3D_DEG_TO_RAD(50.0f), 10.0f, 100.0f);
+    t3d_viewport_set_projection(&viewport, T3D_DEG_TO_RAD(30.0f), 10.0f, 100.0f);
     t3d_viewport_look_at(&viewport, &camera_position, &camera_target, &(T3DVec3){{0,1,0}});
 
-    // const float subtick_delta = (float)(core_get_subtick() * DELTATIME);
-    // GameState interpolation_state = current_state;
-    // tick_game_state(&interpolation_state, subtick_delta);
-    // populate_draw_state(&interpolation_state, &(draw_states[current_draw_state]));
+    const float subtick_delta = (float)(core_get_subtick() * DELTATIME);
+    GameState interpolation_state = current_state;
+    tick_game_state(&interpolation_state, subtick_delta);
+    populate_draw_state(&interpolation_state, &(draw_states[current_draw_state]));
 
-    populate_draw_state(&current_state, &(draw_states[current_draw_state]));
+    // populate_draw_state(&current_state, &(draw_states[current_draw_state]));
 
     rdpq_attach(display_get(), NULL);
     t3d_frame_start();
     rdpq_mode_antialias(AA_NONE);
-    rdpq_mode_persp(false);
+    rdpq_mode_persp(true);
     rdpq_mode_filter(FILTER_POINT);
     rdpq_mode_zbuf(false, false);
 
@@ -353,13 +398,13 @@ void minigame_loop(float deltatime)
     render_draw_state(&(draw_states[current_draw_state]));
     t3d_matrix_pop(1);
 
-    // 2D HUD   
     rdpq_sync_pipe();
     rdpq_set_mode_standard();
     rdpq_mode_alphacompare(128);
     rdpq_sync_load();
     rdpq_tex_upload(TILE0, &sixtwelve_surface, &hud_default_tex_params);
 
+    sprintf(test_str, "FPS: %f", display_get_fps());
     int xStep = 0;
     for (int i = 0; test_str[i] != '\0'; i++)
     {
