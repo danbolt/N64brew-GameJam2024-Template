@@ -85,7 +85,7 @@ GameState current_state;
 
 #define NUMBER_OF_DRAW_STATES 3
 int current_draw_state;
-DrawState draw_states[3];
+DrawState draw_states[NUMBER_OF_DRAW_STATES];
 
 #define MAX_PLAYER_MOVE_SPEED 5.0
 
@@ -311,8 +311,6 @@ void render_draw_state(const DrawState* to_draw)
 
         t3d_tri_sync();
     }
-
-    rdpq_debug_stop();
 }
 
 void init_game_state(GameState* state)
