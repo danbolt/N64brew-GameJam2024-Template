@@ -36,12 +36,12 @@ T3DVertPacked circle_verts[CIRCLE_VERT_COUNT] __attribute__((aligned(16)));
 
 const T3DVertPacked character_verts[2]  __attribute__((aligned(16))) = {
     (T3DVertPacked){
-        .posA = {-4, 0, 1}, .stA = {  0 << 5, 130 << 5 },
-        .posB = { 4, 0, 1}, .stB = { 66 << 5, 130 << 5 },
+        .posA = {-2, 0, 1}, .stA = {  0 << 5, 130 << 5 },
+        .posB = { 2, 0, 1}, .stB = { 66 << 5, 130 << 5 },
     },
     (T3DVertPacked){
-        .posA = { 4, 8, 1}, .stA = { 66 << 5, 0 << 5 },
-        .posB = {-4, 8, 1}, .stB = {  0 << 5, 0 << 5 },
+        .posA = { 2, 8, 1}, .stA = { 66 << 5, 0 << 5 },
+        .posB = {-2, 8, 1}, .stB = {  0 << 5, 0 << 5 },
     }
 };
 
@@ -79,6 +79,7 @@ typedef struct {
     T3DMat4FP arena_transform_fixed;
 
     PlayerDrawState player_draw_states[MAXPLAYERS];
+    uint8_t character_draw_order[MAXPLAYERS];
 } DrawState;
 
 GameState current_state;
@@ -257,6 +258,15 @@ void populate_draw_state(const GameState* state, DrawState* to_draw)
         t3d_mat4_to_fixed(&(to_draw->player_draw_states[i].transform_fixed), &(to_draw->player_draw_states[i].transform));
     }
 
+    int sort_by_z(const void* a, const void* b)
+    {
+        return state->player_states[*((const uint8_t*)a)].position[1] > state->player_states[*((const uint8_t*)b)].position[1];
+    }
+    for (int i = 0; i < MAXPLAYERS; i++) {
+        to_draw->character_draw_order[i] = i;
+    }
+    qsort(to_draw->character_draw_order, MAXPLAYERS, sizeof(uint8_t), sort_by_z);
+
     data_cache_hit_writeback(to_draw, sizeof(DrawState));
 }
 
@@ -300,8 +310,10 @@ void render_draw_state(const DrawState* to_draw)
     rdpq_mode_alphacompare(128);
     t3d_state_set_drawflags(T3D_FLAG_TEXTURED);
     rdpq_tex_upload(TILE0, &emcee_surface, &hud_default_tex_params);
-    for (int pi = 0; pi < MAXPLAYERS; pi++)
+    for (int i = 0; i < MAXPLAYERS; i++)
     {
+        const uint8_t pi = to_draw->character_draw_order[i];
+
         t3d_matrix_push(UncachedAddr(&(to_draw->player_draw_states[pi].transform_fixed)));
         t3d_vert_load(UncachedAddr(character_verts), 0, 4);
         t3d_matrix_pop(1);
@@ -323,9 +335,6 @@ void init_game_state(GameState* state)
         const float theta = ((float)i / (float)MAXPLAYERS) * T3D_PI * 2.0f;
         state->player_states[i].position[0] = cos(theta) * state->arena_radius * 0.75f;
         state->player_states[i].position[1] = sin(theta) * state->arena_radius * 0.75f;
-
-        state->player_states[i].position[0] = (i - 2) * 6.f;
-        state->player_states[i].position[1] = 0.f;
     }
 }
 
