@@ -3,6 +3,7 @@
 #include "../../minigame.h"
 #include <t3d/t3d.h>
 #include <t3d/t3dmath.h>
+#include <t3d/t3dmodel.h>
 
 #include "emcee_image_data.h"
 #include "sixtwelve.h"
@@ -23,6 +24,8 @@ T3DMat4 base_model;
 T3DMat4FP base_model_fp;
 
 T3DMat4FP player_shadow_scale_transform_fixed;
+
+T3DModel* ref_cube_mesh;
 
 const T3DVec3 camera_position = { { 0, 50, 50 } };
 const T3DVec3 camera_target = { { 0, 0, 5 } };
@@ -411,6 +414,8 @@ void render_draw_state(const DrawState* to_draw)
         t3d_tri_sync();
     }
 
+    bool have_not_drawn_grubby_yet = true;
+
     // Draw each player's sprite
     rdpq_sync_pipe();
     rdpq_set_mode_standard();
@@ -461,6 +466,8 @@ void minigame_init()
 {
     generate_circle_model();
     init_static_render_data();
+
+    ref_cube_mesh = t3d_model_load("rom:/dodge-grubby/ref_cube.t3dm");
 
     display_init(RESOLUTION_320x240, DEPTH_16_BPP, 3, GAMMA_NONE, FILTERS_RESAMPLE);
     rdpq_init();
@@ -542,4 +549,6 @@ void minigame_cleanup()
 {
     t3d_destroy();
     display_close();
+
+    t3d_model_free(ref_cube_mesh);
 }
