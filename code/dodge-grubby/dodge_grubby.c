@@ -56,10 +56,17 @@ surface_t emcee_surface;
 #define DOUBLE_PLAYER_RADIUS_SQUARED (DOUBLE_PLAYER_RADIUS * DOUBLE_PLAYER_RADIUS)
 #define PLAYER_SHADOW_SCALE (PLAYER_RADIUS * INV_CIRCLE_MODEL_RADIUS)
 
+typedef enum {
+    ALIVE,
+    DEAD,
+} PlayerStatus;
+
 typedef struct {
     float position[2];
 
     T3DVec3 input_vector;
+
+    PlayerStatus current_status;
 } PlayerState;
 
 typedef struct {
@@ -67,11 +74,17 @@ typedef struct {
     float arena_radius;
 
     PlayerState player_states[MAXPLAYERS];
+
+    float grubby_position[2];
+    float grubby_velocity[2];
+    float grubby_rotation;
 } GameState;
 
 typedef struct {
     T3DMat4 transform;
     T3DMat4FP transform_fixed;
+
+    bool skip_shadow;
 } PlayerDrawState;
 
 typedef struct {
@@ -80,6 +93,9 @@ typedef struct {
 
     PlayerDrawState player_draw_states[MAXPLAYERS];
     uint8_t character_draw_order[MAXPLAYERS];
+
+    T3DMat4 grubby_transform;
+    T3DMat4FP grubby_transform_fixed;
 } DrawState;
 
 GameState current_state;
@@ -88,9 +104,16 @@ GameState current_state;
 int current_draw_state;
 DrawState draw_states[NUMBER_OF_DRAW_STATES];
 
-#define MAX_PLAYER_MOVE_SPEED 5.0
+#define MAX_PLAYER_MOVE_SPEED 10.0
 
-// These should probably be re-evaluated since 2011
+#define GRUBBY_RADIUS 6.f
+#define GRUBBY_RADIUS_SQUARED (GRUBBY_RADIUS * GRUBBY_RADIUS)
+#define GRUBBY_SHADOW_SCALE (GRUBBY_RADIUS * INV_CIRCLE_MODEL_RADIUS)
+#define GRUBBY_HURT_AREA (PLAYER_RADIUS + GRUBBY_RADIUS)
+#define GRUBBY_HURT_AREA_SQUARED (GRUBBY_HURT_AREA * GRUBBY_HURT_AREA)
+T3DMat4FP grubby_shadow_scale_transform_fixed;
+
+// These should probably be re-evaluated since 2021
 #define INPUT_STICK_MIN 7
 #define INPUT_STICK_MAX_HORIZONTAL 70
 #define INPUT_STICK_MAX_VERTICAL 65
@@ -113,6 +136,24 @@ void generate_circle_model()
         };
     }
     data_cache_hit_writeback(circle_verts, sizeof(circle_verts));
+}
+
+void init_static_render_data()
+{
+    T3DMat4 player_shadow_scale_transform;
+    t3d_mat4_identity(&player_shadow_scale_transform);
+    t3d_mat4_scale(&(player_shadow_scale_transform), PLAYER_SHADOW_SCALE, PLAYER_SHADOW_SCALE, PLAYER_SHADOW_SCALE);
+    t3d_mat4_to_fixed(&player_shadow_scale_transform_fixed, &player_shadow_scale_transform);
+    data_cache_hit_writeback(&player_shadow_scale_transform_fixed, sizeof(T3DMat4FP));
+
+    T3DMat4 grubby_shadow_scale_transform;
+    t3d_mat4_identity(&grubby_shadow_scale_transform);
+    t3d_mat4_scale(&(grubby_shadow_scale_transform), GRUBBY_SHADOW_SCALE, GRUBBY_SHADOW_SCALE, GRUBBY_SHADOW_SCALE);
+    t3d_mat4_to_fixed(&grubby_shadow_scale_transform_fixed, &grubby_shadow_scale_transform);
+    data_cache_hit_writeback(&grubby_shadow_scale_transform_fixed, sizeof(T3DMat4FP));
+
+    sixtwelve_surface = surface_make_linear(sixtwelve_tex, FMT_IA4, SIXTWELVE_TEXTURE_WIDTH, SIXTWELVE_TEXTURE_HEIGHT);
+    emcee_surface = surface_make_linear(emcee_image_data, FMT_RGBA16, 32, 64);
 }
 
 void populate_player_input_vector(const joypad_inputs_t* input, T3DVec3* output_vector)
@@ -187,6 +228,12 @@ void tick_game_state(GameState* state, float delta)
     // Handle movement input
     for (int i = 0; i < MAXPLAYERS; i++)
     {
+        // We don't need to control input if the player is dead
+        if (state->player_states[i].current_status == DEAD)
+        {
+            continue;
+        }
+
         const bool player_is_human = i < playercount;
 
         if (player_is_human)
@@ -242,6 +289,42 @@ void tick_game_state(GameState* state, float delta)
             state->player_states[i].position[1] = sin(angle_to_center) * shortened_arena_radius;
         }
     }
+
+    // Step Grubby
+    state->grubby_position[0] += state->grubby_velocity[0] * delta;
+    state->grubby_position[1] += state->grubby_velocity[1] * delta;
+
+    // Clamp grubby to inside of the arena
+    const float shortened_grubby_arena_radius = (state->arena_radius - GRUBBY_RADIUS);
+    const float grubby_dist_to_center_of_area_squared = state->grubby_position[0] * state->grubby_position[0] + state->grubby_position[1] * state->grubby_position[1];
+    if (grubby_dist_to_center_of_area_squared >= (shortened_grubby_arena_radius * shortened_grubby_arena_radius))
+    {
+        const float angle_to_center = atan2(state->grubby_position[1], state->grubby_position[0]);
+
+        state->grubby_position[0] = cos(angle_to_center) * shortened_grubby_arena_radius;
+        state->grubby_position[1] = sin(angle_to_center) * shortened_grubby_arena_radius;
+
+        state->grubby_velocity[0] = 0.f;
+        state->grubby_velocity[1] = 0.f;
+    }
+
+    // Collision-check players with grubby
+    for (int i = 0; i < MAXPLAYERS; i++)
+    {
+        // Don't bother checking with dead players
+        if (state->player_states[i].current_status == DEAD)
+        {
+            continue;
+        }
+
+        const float deltaX = state->player_states[i].position[0] - state->grubby_position[0];
+        const float deltaY = state->player_states[i].position[1] - state->grubby_position[1];
+        const float distance_to_grubby_squared = (deltaX * deltaX) + (deltaY * deltaY);
+        if (distance_to_grubby_squared < GRUBBY_HURT_AREA_SQUARED)
+        {
+            state->player_states[i].current_status = DEAD;
+        }
+    }
 }
 
 void populate_draw_state(const GameState* state, DrawState* to_draw)
@@ -253,6 +336,8 @@ void populate_draw_state(const GameState* state, DrawState* to_draw)
 
     for (int i = 0; i < MAXPLAYERS; i++)
     {
+        to_draw->player_draw_states[i].skip_shadow = state->player_states[i].current_status == DEAD;
+
         t3d_mat4_identity(&(to_draw->player_draw_states[i].transform));
         t3d_mat4_translate(&(to_draw->player_draw_states[i].transform), state->player_states[i].position[0], 0.0, state->player_states[i].position[1]);
         t3d_mat4_to_fixed(&(to_draw->player_draw_states[i].transform_fixed), &(to_draw->player_draw_states[i].transform));
@@ -266,6 +351,10 @@ void populate_draw_state(const GameState* state, DrawState* to_draw)
         to_draw->character_draw_order[i] = i;
     }
     qsort(to_draw->character_draw_order, MAXPLAYERS, sizeof(uint8_t), sort_by_z);
+
+    t3d_mat4_identity(&(to_draw->grubby_transform));
+    t3d_mat4_translate(&(to_draw->grubby_transform), state->grubby_position[0], 0.0, state->grubby_position[1]);
+    t3d_mat4_to_fixed(&(to_draw->grubby_transform_fixed), &(to_draw->grubby_transform));
 
     data_cache_hit_writeback(to_draw, sizeof(DrawState));
 }
@@ -285,11 +374,29 @@ void render_draw_state(const DrawState* to_draw)
 
     rdpq_sync_pipe();
     rdpq_mode_combiner(RDPQ_COMBINER_FLAT);
-    rdpq_set_prim_color((color_t){0, 0, 0, 0xff});
+    rdpq_set_prim_color((color_t){0x10, 0x10, 0x10, 0xff});
+
+    // Draw grubby's shadow
+    t3d_matrix_push(UncachedAddr(&(to_draw->grubby_transform_fixed)));
+    t3d_matrix_push(UncachedAddr(&(grubby_shadow_scale_transform_fixed)));
+
+    t3d_vert_load(UncachedAddr(circle_verts), 0, CIRCLE_VERT_COUNT * 2);
+    t3d_matrix_pop(2);
+    for (int i = 1; i < (CIRCLE_VERT_COUNT * 2) - 1; i++)
+    {
+        t3d_tri_draw(0, i, i + 1);
+    }
+    t3d_tri_draw(0, (CIRCLE_VERT_COUNT * 2) - 1, 1);
+    t3d_tri_sync();
 
     // Draw each player's shadow
+    rdpq_set_prim_color((color_t){0, 0, 0, 0xff});
     for (int pi = 0; pi < MAXPLAYERS; pi++)
     {
+        if (to_draw->player_draw_states[pi].skip_shadow) {
+            continue;
+        }
+
         t3d_matrix_push(UncachedAddr(&(to_draw->player_draw_states[pi].transform_fixed)));
         t3d_matrix_push(UncachedAddr(&(player_shadow_scale_transform_fixed)));
 
@@ -314,6 +421,11 @@ void render_draw_state(const DrawState* to_draw)
     {
         const uint8_t pi = to_draw->character_draw_order[i];
 
+        // TODO: Fix this later with a death animation
+        if (to_draw->player_draw_states[pi].skip_shadow) {
+            continue;
+        }
+
         t3d_matrix_push(UncachedAddr(&(to_draw->player_draw_states[pi].transform_fixed)));
         t3d_vert_load(UncachedAddr(character_verts), 0, 4);
         t3d_matrix_pop(1);
@@ -335,21 +447,20 @@ void init_game_state(GameState* state)
         const float theta = ((float)i / (float)MAXPLAYERS) * T3D_PI * 2.0f;
         state->player_states[i].position[0] = cos(theta) * state->arena_radius * 0.75f;
         state->player_states[i].position[1] = sin(theta) * state->arena_radius * 0.75f;
+        state->player_states[i].current_status = ALIVE;
     }
+
+    state->grubby_position[0] = 0.f;
+    state->grubby_position[1] = 0.f;
+    state->grubby_velocity[0] = 12.f;
+    state->grubby_velocity[1] = 0.f;
+    state->grubby_rotation = 0.f;
 }
 
 void minigame_init()
 {
     generate_circle_model();
-
-    T3DMat4 player_shadow_scale_transform;
-    t3d_mat4_identity(&player_shadow_scale_transform);
-    t3d_mat4_scale(&(player_shadow_scale_transform), PLAYER_SHADOW_SCALE, PLAYER_SHADOW_SCALE, PLAYER_SHADOW_SCALE);
-    t3d_mat4_to_fixed(&player_shadow_scale_transform_fixed, &player_shadow_scale_transform);
-    data_cache_hit_writeback(&player_shadow_scale_transform_fixed, sizeof(T3DMat4FP));
-
-    sixtwelve_surface = surface_make_linear(sixtwelve_tex, FMT_IA4, SIXTWELVE_TEXTURE_WIDTH, SIXTWELVE_TEXTURE_HEIGHT);
-    emcee_surface = surface_make_linear(emcee_image_data, FMT_RGBA16, 32, 64);
+    init_static_render_data();
 
     display_init(RESOLUTION_320x240, DEPTH_16_BPP, 3, GAMMA_NONE, FILTERS_RESAMPLE);
     rdpq_init();
