@@ -11,6 +11,8 @@
 
 #define CLAMP(x, min, max) ((x) < (min) ? (min) : ((x) > (max) ? (max) : (x)))
 
+const T3DVec3 up_vector = { .v = { 0.f, 1.f, 0.f } };
+
 const MinigameDef minigame_def = {
     .gamename = "Dodge Grubby",
     .developername = "Daniel Savage",
@@ -96,9 +98,12 @@ typedef struct {
 
     PlayerDrawState player_draw_states[MAXPLAYERS];
     uint8_t character_draw_order[MAXPLAYERS];
+    uint8_t grubby_draw_index;
 
     T3DMat4 grubby_transform;
     T3DMat4FP grubby_transform_fixed;
+    T3DMat4 grubby_rotation;
+    T3DMat4FP grubby_rotation_fixed;
 } DrawState;
 
 GameState current_state;
@@ -115,6 +120,8 @@ DrawState draw_states[NUMBER_OF_DRAW_STATES];
 #define GRUBBY_HURT_AREA (PLAYER_RADIUS + GRUBBY_RADIUS)
 #define GRUBBY_HURT_AREA_SQUARED (GRUBBY_HURT_AREA * GRUBBY_HURT_AREA)
 T3DMat4FP grubby_shadow_scale_transform_fixed;
+
+#define GRUBBY_MAX_MOVE_SPEED 6.f
 
 // These should probably be re-evaluated since 2021
 #define INPUT_STICK_MIN 7
@@ -215,6 +222,19 @@ void populate_ai_input_vector(const GameState* state, T3DVec3* output_vector)
     output_vector->v[2] = 0.f;
 }
 
+void tick_grubby(GameState* state, float delta)
+{
+    // TODO: rework this check into something more state-machine-y
+    if (state->grubby_velocity[0] == 0.f && state->grubby_velocity[1] == 0.f)
+    {
+        const float random_direction = (rand() / (float)RAND_MAX) * T3D_PI * 2.0;
+        state->grubby_velocity[0] = cos(random_direction) * GRUBBY_MAX_MOVE_SPEED;
+        state->grubby_velocity[1] = sin(random_direction) * GRUBBY_MAX_MOVE_SPEED;
+
+        state->grubby_rotation = random_direction;
+    }
+}
+
 void tick_game_state(GameState* state, float delta)
 {
     // Tick time
@@ -300,7 +320,7 @@ void tick_game_state(GameState* state, float delta)
     // Clamp grubby to inside of the arena
     const float shortened_grubby_arena_radius = (state->arena_radius - GRUBBY_RADIUS);
     const float grubby_dist_to_center_of_area_squared = state->grubby_position[0] * state->grubby_position[0] + state->grubby_position[1] * state->grubby_position[1];
-    if (grubby_dist_to_center_of_area_squared >= (shortened_grubby_arena_radius * shortened_grubby_arena_radius))
+    if (grubby_dist_to_center_of_area_squared > (shortened_grubby_arena_radius * shortened_grubby_arena_radius))
     {
         const float angle_to_center = atan2(state->grubby_position[1], state->grubby_position[0]);
 
@@ -328,6 +348,8 @@ void tick_game_state(GameState* state, float delta)
             state->player_states[i].current_status = DEAD;
         }
     }
+
+    tick_grubby(state, delta);
 }
 
 void populate_draw_state(const GameState* state, DrawState* to_draw)
@@ -350,14 +372,29 @@ void populate_draw_state(const GameState* state, DrawState* to_draw)
     {
         return state->player_states[*((const uint8_t*)a)].position[1] > state->player_states[*((const uint8_t*)b)].position[1];
     }
-    for (int i = 0; i < MAXPLAYERS; i++) {
+    for (int i = 0; i < MAXPLAYERS; i++)
+    {
         to_draw->character_draw_order[i] = i;
     }
     qsort(to_draw->character_draw_order, MAXPLAYERS, sizeof(uint8_t), sort_by_z);
 
+    to_draw->grubby_draw_index = 0;
+    for (int i = 0; i < MAXPLAYERS; i++)
+    {
+        const uint8_t character_draw_index = to_draw->character_draw_order[i];
+        if (state->grubby_position[1] > state->player_states[character_draw_index].position[1])
+        {
+            to_draw->grubby_draw_index = character_draw_index + 1;
+        }
+    }
+
     t3d_mat4_identity(&(to_draw->grubby_transform));
     t3d_mat4_translate(&(to_draw->grubby_transform), state->grubby_position[0], 0.0, state->grubby_position[1]);
     t3d_mat4_to_fixed(&(to_draw->grubby_transform_fixed), &(to_draw->grubby_transform));
+
+    t3d_mat4_identity(&(to_draw->grubby_rotation));
+    t3d_mat4_rotate(&(to_draw->grubby_rotation), &up_vector, state->grubby_rotation - T3D_PI * 0.5f);
+    t3d_mat4_to_fixed(&(to_draw->grubby_rotation_fixed), &(to_draw->grubby_rotation));
 
     data_cache_hit_writeback(to_draw, sizeof(DrawState));
 }
@@ -414,7 +451,7 @@ void render_draw_state(const DrawState* to_draw)
         t3d_tri_sync();
     }
 
-    bool have_not_drawn_grubby_yet = true;
+    bool drawn_grubby = false;
 
     // Draw each player's sprite
     rdpq_sync_pipe();
@@ -425,6 +462,24 @@ void render_draw_state(const DrawState* to_draw)
     for (int i = 0; i < MAXPLAYERS; i++)
     {
         const uint8_t pi = to_draw->character_draw_order[i];
+
+        // Index to determine if we should draw grubby
+        if (((pi + 1) == to_draw->grubby_draw_index) && !drawn_grubby)
+        {
+            t3d_matrix_push(UncachedAddr(&(to_draw->grubby_transform_fixed)));
+            t3d_matrix_push(UncachedAddr(&(grubby_shadow_scale_transform_fixed)));
+            t3d_matrix_push(UncachedAddr(&(to_draw->grubby_rotation_fixed)));
+            t3d_model_draw(ref_cube_mesh);
+            t3d_matrix_pop(3);
+
+            drawn_grubby = true;
+
+            rdpq_sync_pipe();
+            rdpq_set_mode_standard();
+            rdpq_mode_alphacompare(128);
+            t3d_state_set_drawflags(T3D_FLAG_TEXTURED);
+            rdpq_tex_upload(TILE0, &emcee_surface, &hud_default_tex_params);
+        }
 
         // TODO: Fix this later with a death animation
         if (to_draw->player_draw_states[pi].skip_shadow) {
@@ -457,7 +512,7 @@ void init_game_state(GameState* state)
 
     state->grubby_position[0] = 0.f;
     state->grubby_position[1] = 0.f;
-    state->grubby_velocity[0] = 12.f;
+    state->grubby_velocity[0] = 8.f;
     state->grubby_velocity[1] = 0.f;
     state->grubby_rotation = 0.f;
 }
