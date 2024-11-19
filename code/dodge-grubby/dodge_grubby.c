@@ -114,7 +114,7 @@ DrawState draw_states[NUMBER_OF_DRAW_STATES];
 
 #define MAX_PLAYER_MOVE_SPEED 10.0
 
-#define GRUBBY_RADIUS 6.f
+#define GRUBBY_RADIUS 4.f
 #define GRUBBY_RADIUS_SQUARED (GRUBBY_RADIUS * GRUBBY_RADIUS)
 #define GRUBBY_SHADOW_SCALE (GRUBBY_RADIUS * INV_CIRCLE_MODEL_RADIUS)
 #define GRUBBY_HURT_AREA (PLAYER_RADIUS + GRUBBY_RADIUS)
@@ -466,6 +466,8 @@ void render_draw_state(const DrawState* to_draw)
         // Index to determine if we should draw grubby
         if (((pi + 1) == to_draw->grubby_draw_index) && !drawn_grubby)
         {
+            rdpq_sync_pipe();
+            rdpq_mode_zbuf(true, true);
             t3d_matrix_push(UncachedAddr(&(to_draw->grubby_transform_fixed)));
             t3d_matrix_push(UncachedAddr(&(grubby_shadow_scale_transform_fixed)));
             t3d_matrix_push(UncachedAddr(&(to_draw->grubby_rotation_fixed)));
@@ -475,6 +477,7 @@ void render_draw_state(const DrawState* to_draw)
             drawn_grubby = true;
 
             rdpq_sync_pipe();
+            rdpq_mode_zbuf(false, false);
             rdpq_set_mode_standard();
             rdpq_mode_alphacompare(128);
             t3d_state_set_drawflags(T3D_FLAG_TEXTURED);
@@ -522,7 +525,7 @@ void minigame_init()
     generate_circle_model();
     init_static_render_data();
 
-    ref_cube_mesh = t3d_model_load("rom:/dodge-grubby/ref_cube.t3dm");
+    ref_cube_mesh = t3d_model_load("rom:/dodge-grubby/grubby_0_coloured.t3dm");
 
     display_init(RESOLUTION_320x240, DEPTH_16_BPP, 3, GAMMA_NONE, FILTERS_RESAMPLE);
     rdpq_init();
@@ -559,7 +562,7 @@ void minigame_loop(float deltatime)
 
     // populate_draw_state(&current_state, &(draw_states[current_draw_state]));
 
-    rdpq_attach(display_get(), NULL);
+    rdpq_attach(display_get(), display_get_zbuf());
     t3d_frame_start();
     rdpq_mode_antialias(AA_NONE);
     rdpq_mode_persp(true);
@@ -570,6 +573,7 @@ void minigame_loop(float deltatime)
 
     rdpq_mode_combiner(RDPQ_COMBINER_SHADE);
     t3d_screen_clear_color(RGBA32(0xff, 0x22, 0x22, 0x0));
+    t3d_screen_clear_depth();
 
     t3d_light_set_ambient(ambient_light);
     t3d_state_set_drawflags(T3D_FLAG_SHADED);
